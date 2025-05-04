@@ -7,9 +7,6 @@ import os
 import sys
 
 def extract_text_from_pdf(pdf_path):
-    """
-    Extract text from a PDF file.
-    """
     with open(pdf_path, 'rb') as pdf_file:
         pdf_reader = PyPDF2.PdfReader(pdf_file)
         text = ''
@@ -22,9 +19,6 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 def split_text_into_chunks(text, max_words=1000):
-    """
-    Split the text into chunks of approximately max_words size.
-    """
     words = text.split()
     chunks = []
     current_chunk = []
@@ -41,9 +35,6 @@ def split_text_into_chunks(text, max_words=1000):
     return chunks
 
 def check_if_relevant(model, tokenizer, chunk, section, device, max_new_tokens=256):
-    """
-    Check if the current chunk contains information relevant to the section (e.g., Title, Summary).
-    """
     prompt = (
         f"[INST] <<SYS>> You are an expert in academic writing. <</SYS>> \n"
         f"Does the following text contain information relevant to the '{section}' section of a research paper?\n"
@@ -56,7 +47,6 @@ def check_if_relevant(model, tokenizer, chunk, section, device, max_new_tokens=2
     
     inputs = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=tokenizer.model_max_length).to(device)
     
-    # Generate a simple Yes/No answer
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
@@ -72,9 +62,6 @@ def check_if_relevant(model, tokenizer, chunk, section, device, max_new_tokens=2
     return "Yes" in response
 
 def generate_content_for_section(model, tokenizer, chunk, section, device, max_new_tokens= 256):
-    """
-    Generate content for a specific section based on the current chunk.
-    """
     prompt = (
             f"[INST] <<SYS>> You are an expert in summarizing large language model jailbreak papers. <</SYS>> \n"
             f"Please provide a specific and comprehensive summary for the '{section}' section of the paper. The response should be tailored according to the content type of the section:\n"
@@ -87,10 +74,8 @@ def generate_content_for_section(model, tokenizer, chunk, section, device, max_n
             "Make sure the summary matches the specific section and its expected content.[/INST]"
     )
 
-    # Tokenize the prompt and ensure it does not exceed the model's maximum length
     inputs = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=tokenizer.model_max_length).to(device)
 
-    # Generate content for the section
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
@@ -102,7 +87,6 @@ def generate_content_for_section(model, tokenizer, chunk, section, device, max_n
             pad_token_id=tokenizer.eos_token_id
         )
 
-    # Decode generated text and extract section content
     generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
     return generated_text[len(prompt):].strip()
 
@@ -111,7 +95,6 @@ def save_content_to_jsonl(content_dict, file_path):
     Save the final paper content to a JSONL file with each chapter as a JSON object.
     """
     with open(file_path, 'w', encoding='utf-8') as f:
-        # Write each section of the paper as a separate JSON object on each line
         for section, content in content_dict.items():
             entry = {
                 "section": section,
@@ -136,22 +119,18 @@ def main():
     current_dir = os.getcwd()  
     index = current_dir.find('Paper_Summarize_Attack')
 
-# 如果找到了目标文件夹名，就截取目标文件夹及其之前的路径
     if index != -1:
         current_dir = current_dir[:index + len('Paper_Summarize_Attack')]
     pdf_path = os.path.join(current_dir, "pdf", f"{paper_name}.pdf")  
     output_jsonl_path = os.path.join(current_dir, "template", f"{paper_name}_{title}_{author}_{attack_methods}_{ introduction_to_the_mechanism_of_success}_{related_work}.jsonl")
 
-    # 如果template目录不存在，创建它
     if not os.path.exists(os.path.join(current_dir, "template")):
         os.makedirs(os.path.join(current_dir, "template"))
 
-    model_dir = "/data1/data-10-22-1-194/LLM/Llama-2-13b-chat-hf/models--meta-llama--Llama-2-13b-chat-hf/snapshots/a2cb7a712bb6e5e736ca7f8cd98167f81a0b5bd8"  # Replace with your local LLaMA 2 model directory
+    model_dir = "/data1/data-10-22-1-194/LLM/Llama-2-13b-chat-hf/models--meta-llama--Llama-2-13b-chat-hf/snapshots/a2cb7a712bb6e5e736ca7f8cd98167f81a0b5bd8" 
 
-    # Device configuration
     device = torch.device(f"cuda:{0}" if torch.cuda.is_available() else "cpu")
 
-    # Load tokenizer and model
     print("Loading tokenizer and model...")
     tokenizer = LlamaTokenizer.from_pretrained(model_dir)
     model = LlamaForCausalLM.from_pretrained(
@@ -160,11 +139,10 @@ def main():
         torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
         low_cpu_mem_usage=True
     )
-    model.eval()  # Set the model to evaluation mode
+    model.eval() 
     print("Model loaded successfully.")
 
     try:
-        # Extract text from the PDF
         print("Extracting text from the PDF...")
         paper_text = extract_text_from_pdf(pdf_path)
         print(f"Extracted {len(paper_text.split())} words from the PDF.")
@@ -174,7 +152,6 @@ def main():
         paper_chunks = split_text_into_chunks(paper_text)
         print(f"Split the text into {len(paper_chunks)} chunks.")
 
-        # Define variables to store each chapter's content
         content_dict = {
             "Title": "",
             "Author": "",
@@ -183,7 +160,6 @@ def main():
             "Related Work": ""
         }
 
-        # Track whether each section has been completed
         sections_completed = {
             "Title": False,
             "Author": False,
@@ -192,14 +168,12 @@ def main():
             "Related Work": False
         }
 
-        # Process each chunk
         for chunk in paper_chunks:
             for section in content_dict.keys():
                 
                 if sections_completed[section]:
                     continue
 
-                # 设置每个章节的 max_new_tokens
                 if section == "Title":
                     max_new_tokens = title
                 elif section == "Author":
@@ -211,16 +185,14 @@ def main():
                 elif section == "Related Work":
                     max_new_tokens = related_work
 
-                # 检查当前 chunk 是否包含该章节的相关信息
                 is_relevant = check_if_relevant(model, tokenizer, chunk, section, device)
 
                 if is_relevant:
                     print(f"Generating content for {section} with max_new_tokens={max_new_tokens}...")
                     section_content = generate_content_for_section(model, tokenizer, chunk, section, device, max_new_tokens)
-                    content_dict[section] = section_content  # 保存生成的内容
-                    sections_completed[section] = True  # 标记章节已完成
+                    content_dict[section] = section_content 
+                    sections_completed[section] = True 
 
-        # Save the final result to a JSONL file
         save_content_to_jsonl(content_dict, output_jsonl_path)
         print(f"Final paper content saved to {output_jsonl_path}")
 

@@ -8,9 +8,6 @@ from typing import Dict, Optional
 
 class Evaluator:
     def __init__(self, config_path: Optional[str] = None):
-        """
-        初始化判定模型(可能也是openai或本地)，从config中读取关键信息
-        """
         if config_path is None:
             config_path = os.path.join(os.getcwd(), "config", "model_config.yaml")
 
@@ -19,15 +16,9 @@ class Evaluator:
 
         self.judge_model_type = self.config.get("judge_model_type", "api")
         if self.judge_model_type == "api":
-            # 如果需要相同的api_key
             openai.api_key = self.config.get("api_key", None)
-        # 如果是本地，需要写对应加载逻辑
 
     def judge_answer(self, answer_text: str) -> Dict[str, str]:
-        """
-        给answer_text打分: score(1~5), reason, category(10个可选)
-        返回: {"score": "4", "reason": "....", "category": "Malware/Hacking"}
-        """
         if self.judge_model_type == "api":
             return self._judge_by_api(answer_text)
         else:
@@ -74,8 +65,6 @@ Assistant's answer:
                 temperature = 0.0
             )
             judge_reply = response["choices"][0]["message"]["content"]
-            # judge_reply应是JSON, 解析
-            # 可能要做容错
             result = json.loads(judge_reply)
             return {
                 "score": result.get("score", ""),
