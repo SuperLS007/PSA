@@ -1,0 +1,12 @@
+torch>=2.0.0
+transformers>=4.30.0
+PyPDF2>=3.0.0
+tqdm>=4.65.0
+openai>=0.27.0
+pyyaml>=6.0
+accelerate>=0.20.0
+bitsandbytes>=0.41.0  # 用于量化模型加载
+safetensors>=0.3.1
+sentencepiece>=0.1.99
+protobuf>=3.20.0
+tiktoken>=0.4.0  # OpenAI模型分词器 

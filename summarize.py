@@ -1,22 +1,28 @@
 import torch
-from transformers import LlamaForCausalLM, LlamaTokenizer
+from transformers import LlamaForCausalLM, LlamaTokenizer, AutoModelForCausalLM, AutoTokenizer
 import PyPDF2
 import json
 from tqdm import tqdm
 import os
 import sys
+import argparse
+import yaml
 
 def extract_text_from_pdf(pdf_path):
-    with open(pdf_path, 'rb') as pdf_file:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ''
-        for page_num, page in enumerate(pdf_reader.pages, start=1):
-            extracted_text = page.extract_text()
-            if extracted_text:
-                text += extracted_text + '\n'
-            else:
-                print(f"Warning: No text extracted from page {page_num}.")
-    return text
+    try:
+        with open(pdf_path, 'rb') as pdf_file:
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            text = ''
+            for page_num, page in enumerate(pdf_reader.pages, start=1):
+                extracted_text = page.extract_text()
+                if extracted_text:
+                    text += extracted_text + '\n'
+                else:
+                    print(f"Warning: No text extracted from page {page_num}.")
+        return text
+    except Exception as e:
+        print(f"PDF extraction error: {e}")
+        return ""
 
 def split_text_into_chunks(text, max_words=1000):
     words = text.split()
@@ -91,66 +97,128 @@ def generate_content_for_section(model, tokenizer, chunk, section, device, max_n
     return generated_text[len(prompt):].strip()
 
 def save_content_to_jsonl(content_dict, file_path):
-    """
-    Save the final paper content to a JSONL file with each chapter as a JSON object.
-    """
-    with open(file_path, 'w', encoding='utf-8') as f:
-        for section, content in content_dict.items():
-            entry = {
-                "section": section,
-                "content": content
-            }
-            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+    try:
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        with open(file_path, 'w', encoding='utf-8') as f:
+            for section, content in content_dict.items():
+                entry = {
+                    "section": section,
+                    "content": content
+                }
+                f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        return True
+    except Exception as e:
+        print(f"Error saving JSONL file: {e}")
+        return False
+
+def load_model_config(config_path):
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        return config
+    except Exception as e:
+        print(f"Error loading config file: {e}")
+        return {}
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Paper Summary Generator Tool")
+    
+    parser.add_argument("paper_name", type=str, help="PDF filename (without extension)")
+    parser.add_argument("--title", type=int, default=100, help="Maximum tokens for Title section")
+    parser.add_argument("--author", type=int, default=100, help="Maximum tokens for Author section")
+    parser.add_argument("--attack-methods", type=int, default=500, help="Maximum tokens for Attack Methods section")
+    parser.add_argument("--mechanism", type=int, default=500, help="Maximum tokens for Mechanism section")
+    parser.add_argument("--related-work", type=int, default=500, help="Maximum tokens for Related Work section")
+    
+    parser.add_argument("--pdf-dir", type=str, default="pdf", help="PDF directory")
+    parser.add_argument("--output-dir", type=str, default="template", help="Output directory")
+    parser.add_argument("--type", type=str, default="", choices=["attack", "defend", ""], help="Paper type, default unspecified")
+    
+    parser.add_argument("--config", type=str, default="config/model_config.yaml", help="Model config file path")
+    parser.add_argument("--device", type=str, default="cuda:0", help="Device to use, such as 'cuda:0'")
+    
+    return parser.parse_args()
 
 def main():
-
-    if len(sys.argv) < 7:
-        print("please offer the paper name and five additional parameters")
+    args = parse_args()
+    
+    config = load_model_config(args.config)
+    
+    current_dir = os.getcwd()
+    pdf_dir = os.path.join(current_dir, args.pdf_dir)
+    
+    if args.type:
+        pdf_dir = os.path.join(pdf_dir, args.type)
+    
+    pdf_path = os.path.join(pdf_dir, f"{args.paper_name}.pdf")
+    
+    if not os.path.exists(pdf_path):
+        print(f"Error: PDF file does not exist - {pdf_path}")
+        return
+    
+    output_dir = os.path.join(current_dir, args.output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    
+    output_jsonl_path = os.path.join(
+        output_dir, 
+        f"{args.paper_name}_{args.title}_{args.author}_{args.attack_methods}_{args.mechanism}_{args.related_work}.jsonl"
+    )
+    
+    model_path = config.get("summarize_model_path", None)
+    if not model_path:
+        model_path = config.get("local_model_path", None)
+    
+    if not model_path:
+        print("Error: No valid model path found in config file")
+        return
+    
+    print(f"Using model path: {model_path}")
+    
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    
+    print("Loading tokenizer and model...")
+    
+    try:
+        if "llama" in model_path.lower():
+            tokenizer = LlamaTokenizer.from_pretrained(model_path, trust_remote_code=True)
+            model = LlamaForCausalLM.from_pretrained(
+                model_path,
+                device_map=args.device,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True
+            )
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+            model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                device_map=args.device,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True
+            )
+        
+        model.eval()
+        print("Model loaded successfully")
+    except Exception as e:
+        print(f"Model loading failed: {e}")
         return
 
-    paper_name = sys.argv[1]
-    title = int(sys.argv[2])  
-    author = int(sys.argv[3])
-    attack_methods = int(sys.argv[4])
-    introduction_to_the_mechanism_of_success = int(sys.argv[5])
-    related_work = int(sys.argv[6])
-
-    # Configurations
-    current_dir = os.getcwd()  
-    index = current_dir.find('Paper_Summarize_Attack')
-
-    if index != -1:
-        current_dir = current_dir[:index + len('Paper_Summarize_Attack')]
-    pdf_path = os.path.join(current_dir, "pdf", f"{paper_name}.pdf")  
-    output_jsonl_path = os.path.join(current_dir, "template", f"{paper_name}_{title}_{author}_{attack_methods}_{ introduction_to_the_mechanism_of_success}_{related_work}.jsonl")
-
-    if not os.path.exists(os.path.join(current_dir, "template")):
-        os.makedirs(os.path.join(current_dir, "template"))
-
-    model_dir = "/data1/data-10-22-1-194/LLM/Llama-2-13b-chat-hf/models--meta-llama--Llama-2-13b-chat-hf/snapshots/a2cb7a712bb6e5e736ca7f8cd98167f81a0b5bd8" 
-
-    device = torch.device(f"cuda:{0}" if torch.cuda.is_available() else "cpu")
-
-    print("Loading tokenizer and model...")
-    tokenizer = LlamaTokenizer.from_pretrained(model_dir)
-    model = LlamaForCausalLM.from_pretrained(
-        model_dir,
-        device_map="cuda:0",
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        low_cpu_mem_usage=True
-    )
-    model.eval() 
-    print("Model loaded successfully.")
-
     try:
-        print("Extracting text from the PDF...")
+        print(f"Extracting text from PDF: {pdf_path}")
         paper_text = extract_text_from_pdf(pdf_path)
-        print(f"Extracted {len(paper_text.split())} words from the PDF.")
+        
+        if not paper_text:
+            print("Error: Cannot extract text from PDF or extracted text is empty")
+            return
+            
+        print(f"Extracted {len(paper_text.split())} words from PDF.")
 
-        # Split the text into chunks
-        print("Splitting the text into chunks...")
+        print("Splitting text into chunks...")
         paper_chunks = split_text_into_chunks(paper_text)
-        print(f"Split the text into {len(paper_chunks)} chunks.")
+        print(f"Text has been split into {len(paper_chunks)} chunks.")
 
         content_dict = {
             "Title": "",
@@ -168,33 +236,39 @@ def main():
             "Related Work": False
         }
 
-        for chunk in paper_chunks:
+        for chunk_idx, chunk in enumerate(paper_chunks):
+            print(f"Processing chunk {chunk_idx+1}/{len(paper_chunks)}...")
             for section in content_dict.keys():
-                
                 if sections_completed[section]:
                     continue
 
                 if section == "Title":
-                    max_new_tokens = title
+                    max_new_tokens = args.title
                 elif section == "Author":
-                    max_new_tokens = author
+                    max_new_tokens = args.author
                 elif section == "Summary of Attack Methods":
-                    max_new_tokens = attack_methods
+                    max_new_tokens = args.attack_methods
                 elif section == "Mechanism analysis of successful jailbreak":
-                    max_new_tokens = introduction_to_the_mechanism_of_success
+                    max_new_tokens = args.mechanism
                 elif section == "Related Work":
-                    max_new_tokens = related_work
+                    max_new_tokens = args.related_work
 
+                print(f"  Checking if chunk is relevant to '{section}'...")
                 is_relevant = check_if_relevant(model, tokenizer, chunk, section, device)
 
                 if is_relevant:
-                    print(f"Generating content for {section} with max_new_tokens={max_new_tokens}...")
+                    print(f"  Generating content for '{section}', max tokens={max_new_tokens}...")
                     section_content = generate_content_for_section(model, tokenizer, chunk, section, device, max_new_tokens)
                     content_dict[section] = section_content 
-                    sections_completed[section] = True 
+                    sections_completed[section] = True
+                    print(f"  '{section}' section completed.")
 
-        save_content_to_jsonl(content_dict, output_jsonl_path)
-        print(f"Final paper content saved to {output_jsonl_path}")
+        incomplete_sections = [section for section, completed in sections_completed.items() if not completed]
+        if incomplete_sections:
+            print(f"Warning: The following sections could not be generated: {', '.join(incomplete_sections)}")
+        
+        if save_content_to_jsonl(content_dict, output_jsonl_path):
+            print(f"Paper content saved to {output_jsonl_path}")
 
     except Exception as e:
         print(f"An error occurred: {e}")

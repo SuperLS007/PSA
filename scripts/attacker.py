@@ -25,9 +25,29 @@ class Attacker:
             
         elif self.model_type == "local":
             self.local_model_name = self.config.get("local_model_name", "")
-            self.tokenizer = AutoTokenizer.from_pretrained(self.local_model_name)
-            self.model = AutoModelForCausalLM.from_pretrained(self.local_model_name)
-            self.pipe = pipeline("text-generation", model=self.model, tokenizer=self.tokenizer, device=0)
+            
+            model_path = self.config.get("local_model_path", self.local_model_name)
+            
+            print(f"Loading local model: {model_path}")
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_path,
+                trust_remote_code=True
+            )
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                device_map="auto",
+                torch_dtype="auto",
+                trust_remote_code=True,
+                low_cpu_mem_usage=True
+            )
+            
+            self.gen_config = {
+                "max_length": self.config.get("max_length", 1024),
+                "temperature": self.config.get("temperature", 0.7),
+                "top_p": self.config.get("top_p", 0.95),
+                "do_sample": self.config.get("do_sample", True),
+                "num_return_sequences": 1
+            }
 
     def query_model(self, prompt: str) -> str:
         if self.model_type == "api":
@@ -42,15 +62,40 @@ class Attacker:
             response = openai.ChatCompletion.create(
                 model = self.config.get("api_model_name", "gpt-3.5-turbo"),
                 messages = [{"role": "user", "content": prompt}],
-                temperature = 0.7
+                temperature = 0.7,
+                max_tokens = self.config.get("max_tokens", 1000)
             )
             answer = response["choices"][0]["message"]["content"]
             return answer
         except Exception as e:
             print("Error calling API:", e)
-            return "Error calling API."
+            return f"Error calling API: {str(e)}"
 
     def _query_local(self, prompt: str) -> str:
-        result = self.pipe(prompt, max_length=1024, do_sample=True)
-        answer = result[0]["generated_text"]
-        return answer
+        try:
+            input_ids = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+            
+            max_length = self.gen_config["max_length"]
+            temperature = self.gen_config["temperature"]
+            top_p = self.gen_config["top_p"]
+            do_sample = self.gen_config["do_sample"]
+            
+            outputs = self.model.generate(
+                **input_ids,
+                max_length=max_length,
+                temperature=temperature,
+                top_p=top_p,
+                do_sample=do_sample,
+                pad_token_id=self.tokenizer.eos_token_id
+            )
+            
+            answer = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            
+            if answer.startswith(prompt):
+                answer = answer[len(prompt):].strip()
+                
+            return answer
+            
+        except Exception as e:
+            print(f"Local model generation error: {e}")
+            return f"Local model generation error: {str(e)}"

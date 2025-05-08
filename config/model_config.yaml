@@ -1,9 +1,25 @@
-model_type: "api"      
+# 攻击模型配置
+model_type: "api"      # api 或 local
 api_provider: "openai" 
 api_key: "sk-xxx..."   
 api_model_name: "gpt-3.5-turbo"
+max_tokens: 1000
 
-judge_model_type: "api"
+# 使用本地模型的配置
+local_model_name: "decapoda-research/llama-7b-hf"
+local_model_path: "/path/to/your/local/model"  # 本地模型绝对路径，优先于local_model_name
+max_length: 1024
+temperature: 0.7
+top_p: 0.95
+do_sample: true
+
+# 评估模型配置
+judge_model_type: "api"  # api 或 local
 judge_api_model_name: "gpt-3.5-turbo"
 
-local_model_name: "decapoda-research/llama-7b-hf"
+# 本地评估模型
+judge_local_model_name: "decapoda-research/llama-7b-hf"
+judge_local_model_path: "/path/to/your/judge/model"  # 本地评估模型路径
+
+# 摘要生成模型配置
+summarize_model_path: "/path/to/your/summarize/model"  # 摘要生成模型路径
